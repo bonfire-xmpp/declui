@@ -1,0 +1,35 @@
+name: CI
+on: [push]
+jobs:
+  build:
+    name: Build, lint, and test on Node ${{ matrix.node }} and ${{ matrix.os }}
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        node: ['14.x']
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Vue3 peer dependency manually
+        run: npm i vue@3
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test -- --ci --coverage --maxWorkers=2
+
+      - name: Build
+        run: npm run build
