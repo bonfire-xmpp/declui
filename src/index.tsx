@@ -165,9 +165,18 @@ export function transformRulesToComponent(
     );
     return containingElement === 'none'
       ? funs.map((f) => f())
-      : h(containingElement as any, null, {
+      : typeof containingElement === 'string'
+      ? // If it's a plain HTML element, don't pass any attrs
+        h(containingElement, null, {
           default: () => funs.map((f) => f()),
-        });
+        })
+      : h(
+          containingElement as any,
+          { ...props, ...context.attrs },
+          {
+            default: () => funs.map((f) => f()),
+          }
+        );
   };
   render.emits = emits;
   render.props = props;
