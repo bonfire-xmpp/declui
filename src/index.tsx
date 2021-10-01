@@ -53,10 +53,18 @@ type PropsParameter<P> =
   // This is needed to keep the relation between prop and definition in $props; borrowed from vue
   { [K in keyof P]?: unknown } &
     { [K in RequiredKeys<P>]: InferPropType<P[K]> } &
-    { [K in OptionalKeys<P>]?: InferPropType<P[K]> };
+    { [K in OptionalKeys<P>]?: InferPropType<P[K]> } & { _id?: number };
 
 // eslint-disable-next-line
-type Context = Omit<SetupContext<{}>, 'expose'>;
+type VueContext = Omit<SetupContext<{}>, 'expose'>;
+
+type Context = VueContext & {
+  $attrs?: any;
+  $props?: any;
+  $emit?: (...args: any) => void;
+} & {
+  globals: Record<string, any>;
+};
 
 /**
  * The type of a single rule, transforming $props using $becomes
@@ -69,7 +77,7 @@ export interface ComponentRule<
   $name: N;
   $props?: P;
   $emits?: string[];
-  $becomes: (props: PropsParameter<P>, context: Context) => VNode;
+  $becomes: (props: PropsParameter<P>, context: Context, id: number) => VNode;
 }
 
 /**
@@ -105,9 +113,12 @@ function checkIfRuleMatchesProps<P extends Props>(
   rule: ComponentRule<any, P>,
   props: Record<string, any>
 ): boolean {
-  const ruleProps = Object.entries(rule.$props || {});
+  const ruleProps = Object.entries({
+    [rule.$name]: undefined,
+    ...(rule.$props || {}),
+  });
   return (
-    props[rule.$name] !== undefined ||
+    props[rule.$name] !== undefined &&
     Object.entries(props)
       .map(
         ([propName]) =>
@@ -117,10 +128,31 @@ function checkIfRuleMatchesProps<P extends Props>(
   );
 }
 
+type TransformSettings = {
+  /**
+   * Selects whether the output component should be functional (if true), or
+   * stateful (the default).
+   */
+  functionalOutput?: boolean;
+
+  /**
+   * Specifies what component, HTML tag (if any) should enclose the rendered list.
+   */
+  containingElement?: Component | string | 'none';
+
+  /**
+   * The function that will be set as the component's `setup()`, if the output
+   * isn't functional.
+   */
+  setup?: (props: any, context: VueContext) => any;
+};
+
 export function transformRulesToComponent(
   rules: readonly ComponentRule<any, any>[],
-  containingElement: Component | string | 'none' = 'div'
-): FunctionalComponent {
+  settings: TransformSettings
+): FunctionalComponent | Component {
+  const containingElement = settings.containingElement ?? 'div';
+
   const emits = rules.reduce(
     (acc: string[], x) => (acc = acc.concat(x.$emits || [])) && acc,
     []
@@ -141,45 +173,138 @@ export function transformRulesToComponent(
     ...inputProps,
   };
 
-  const render = (props: any, context: Context) => {
-    const funs: Array<(...args: any[]) => VNode> = props.data.map(
-      (ps: Props) => () => {
-        const matchedRule = rules.find((r) => checkIfRuleMatchesProps(r, ps));
-        const defaultProps = Object.fromEntries(
-          Object.entries(matchedRule?.$props || {})
-            .filter(([, v]) => (v as PropWithOptions)?.default !== undefined)
-            .map(([k, v]) => [k, (v as PropWithOptions).default])
-        );
-        return (
-          matchedRule?.$becomes ||
-          (() => console.warn('Could not match input', ps, 'with any rule'))
-        )(
-          {
-            ...defaultProps,
-            ...props,
-            ...ps,
-          },
-          context
-        );
+  // const globals: any = {};
+  // const inject = (key: string, value: any) => (globals[key] = value);
+
+  if (settings.functionalOutput) {
+    const render: any = function (
+      this: Record<string, any>,
+      props: any,
+      context: VueContext
+    ) {
+      // eslint-disable-next-line
+      const { data, ...propsSansData } = props;
+
+      const funs: Array<(...args: any[]) => VNode> = props.data.map(
+        (ps: Props, i: number) => () => {
+          const matchedRule = rules.find((r) => checkIfRuleMatchesProps(r, ps));
+          const defaultProps = Object.fromEntries(
+            Object.entries(matchedRule?.$props || {})
+              .filter(([, v]) => (v as PropWithOptions)?.default !== undefined)
+              .map(([k, v]) => [k, (v as PropWithOptions).default])
+          );
+          return (
+            matchedRule?.$becomes ||
+            (() => console.warn('Could not match input', ps, 'with any rule'))
+          )(
+            {
+              ...defaultProps,
+              ...propsSansData,
+              ...ps,
+            },
+            { ...context, globals: this.globals },
+            i
+          );
+        }
+      );
+
+      // No containing element, return the rendered array
+      if (containingElement === 'none') {
+        return funs.map((f) => f());
       }
-    );
-    return containingElement === 'none'
-      ? funs.map((f) => f())
-      : typeof containingElement === 'string'
-      ? // If it's a plain HTML element, don't pass any attrs
-        h(containingElement, null, {
+
+      // If it's a plain HTML element, don't pass any attrs
+      else if (typeof containingElement === 'string') {
+        return h(containingElement, null, {
           default: () => funs.map((f) => f()),
-        })
-      : h(
+        });
+      }
+
+      // It's a Vue component, pass the props and inherit attrs
+      else {
+        return h(
           containingElement as any,
-          { ...props, ...context.attrs },
+          { ...propsSansData, ...context.attrs },
           {
             default: () => funs.map((f) => f()),
           }
         );
-  };
-  render.emits = emits;
-  render.props = props;
+      }
+    }.bind({
+      globals: {} as Record<string, any>,
+    });
 
-  return render;
+    render.emits = emits;
+    render.props = props;
+
+    return render;
+  }
+
+  // Output a stateful (regular) component
+  else {
+    return {
+      props,
+      emits,
+      setup: settings.setup,
+      provide() {
+        return {
+          globals: {},
+        };
+      },
+      render() {
+        // eslint-disable-next-line
+        const { data, ...propsSansData } = this.$props;
+
+        const funs: Array<(...args: any[]) => VNode> = this.$props.data.map(
+          (ps: Props, i: number) => () => {
+            const matchedRule = rules.find((r) =>
+              checkIfRuleMatchesProps(r, ps)
+            );
+            const defaultProps = Object.fromEntries(
+              Object.entries(matchedRule?.$props || {})
+                .filter(
+                  ([, v]) => (v as PropWithOptions)?.default !== undefined
+                )
+                .map(([k, v]) => [k, (v as PropWithOptions).default])
+            );
+            return (
+              matchedRule?.$becomes ||
+              (() => console.warn('Could not match input', ps, 'with any rule'))
+            )(
+              {
+                ...defaultProps,
+                ...propsSansData,
+                ...ps,
+              },
+              this,
+              i
+            );
+          }
+        );
+
+        // No containing element, return the rendered array
+        if (containingElement === 'none') {
+          return funs.map((f) => f());
+        }
+
+        // If it's a plain HTML element, don't pass any attrs
+        else if (typeof containingElement === 'string') {
+          return h(containingElement, null, {
+            default: () => funs.map((f) => f()),
+          });
+        }
+
+        // It's a Vue component, pass the props and inherit attrs
+        else {
+          return h(
+            containingElement as any,
+            { ...propsSansData, ...this.$attrs },
+            {
+              default: () => funs.map((f) => f()),
+            }
+          );
+        }
+      },
+    };
+  }
 }

@@ -4,10 +4,10 @@ import { babel } from '@rollup/plugin-babel';
 
 const name = require('./package.json').main.replace(/\.js$/, '');
 
-const bundle = config => ({
+const bundle = (config) => ({
   ...config,
   input: 'src/index.tsx',
-  external: id => !/^[./]/.test(id),
+  external: (id) => !/^[./]/.test(id),
 });
 
 export default [
