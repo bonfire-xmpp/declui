@@ -147,10 +147,10 @@ type TransformSettings = {
   setup?: (props: any, context: VueContext) => any;
 };
 
-export function transformRulesToComponent(
+export function transformRulesToComponent<Settings extends TransformSettings>(
   rules: readonly ComponentRule<any, any>[],
-  settings: TransformSettings
-): FunctionalComponent | Component {
+  settings: Settings
+): Settings['functionalOutput'] extends true ? FunctionalComponent : Component {
   const containingElement = settings.containingElement ?? 'div';
 
   const emits = rules.reduce(
@@ -305,6 +305,6 @@ export function transformRulesToComponent(
           );
         }
       },
-    };
+    } as any;
   }
 }

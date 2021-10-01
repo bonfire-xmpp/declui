@@ -51,7 +51,10 @@ test('defineRules() typechecks, and is isomorphic to identity', () => {
 
 describe('all component features work', () => {
   const rules = [defineRule(rule1), defineRule(rule2)] as const;
-  const Tooltip = transformRulesToComponent(rules, 'main');
+  const Tooltip = transformRulesToComponent(rules, {
+    containingElement: 'main',
+    functionalOutput: true,
+  });
   const data: RuleInput<typeof rules> = [
     { divider: true },
     { title: 'Add Friend', icon: 'account', role: 'additive' },
@@ -82,7 +85,9 @@ describe('all component features work', () => {
   });
 
   it('default prop values work', () => {
-    const wrapper = mount(Tooltip, { props: { data: [{ title: 'title' }] } });
+    const wrapper = mount(Tooltip, {
+      props: { data: [{ title: 'title' }] },
+    });
     expect(wrapper.text()).toContain(
       'test 1234 this is the default prop value'
     );
@@ -101,7 +106,10 @@ describe('all component features work', () => {
       { divider: true },
       { title: 'Add Friend', icon: 'account', role: 'additive' },
     ];
-    const Tooltip = transformRulesToComponent(rules, 'none');
+    const Tooltip = transformRulesToComponent(rules, {
+      containingElement: 'none',
+      functionalOutput: true,
+    });
     const wrapper = mount(Tooltip, { props: { data } });
 
     // <hr /> + 2 elements in rule1 = 3 total elements (no wrapper)
